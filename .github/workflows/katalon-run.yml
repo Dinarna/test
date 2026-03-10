@@ -102,6 +102,27 @@ jobs:
           </GlobalVariableEntities>
           EOFGLBL
 
+          # Create settings folder for browser config
+          mkdir -p katalon-project/settings/internal
+
+          # Chrome headless config for Docker (Katalon format)
+          cat > katalon-project/settings/internal/com.kms.katalon.core.webui.chrome.properties << 'EOFCHROME'
+          chrome.driver.args=headless\=new,no-sandbox,disable-dev-shm-usage,disable-gpu,disable-software-rasterizer
+          EOFCHROME
+
+          # General WebUI settings
+          cat > katalon-project/settings/internal/com.kms.katalon.core.webui.webui.properties << 'EOFWEBUI'
+          webui.autoUpdateDrivers=true
+          webui.default_browser=Chrome
+          EOFWEBUI
+
+          # Execution settings
+          cat > katalon-project/settings/internal/com.kms.katalon.execution.properties << 'EOFEXEC'
+          execution.default.timeout=30
+          execution.default.waitForIEHanging=600
+          execution.default.openReportAfterExecuting=false
+          EOFEXEC
+
           # Write test scripts and create corresponding test case files
           if [ -f scripts.json ]; then
             echo "Processing scripts from Supabase..."
@@ -198,7 +219,9 @@ jobs:
 
           echo "✅ Project structure built"
           ls -la katalon-project/
+          ls -la "katalon-project/Test Cases/" || echo "No test cases"
           ls -la "katalon-project/Test Suites/" || echo "No test suites"
+          ls -la "katalon-project/settings/internal/" || echo "No settings"
 
       - name: Run Katalon Tests with Docker
         id: katalon
@@ -221,17 +244,17 @@ jobs:
             -e KATALON_API_KEY="${KATALON_API_KEY}" \
             katalonstudio/katalon \
             katalonc \
+            -noSplash \
+            -runMode=console \
             -apiKey="${KATALON_API_KEY}" \
             -projectPath=/katalon/katalon/source \
             -testSuitePath="Test Suites/AllTests" \
-            -browserType="${{ github.event.client_payload.browser_type }}" \
+            -browserType="Chrome (headless)" \
             -retry=0 \
             -statusDelay=15 \
             -reportFolder=/katalon/katalon/reports \
             --config \
-            -webui.autoUpdateDrivers=true \
-            -proxy.option=NO_PROXY \
-            -webui.chrome.args="--headless=new,--no-sandbox,--disable-dev-shm-usage,--disable-gpu"
+            -webui.autoUpdateDrivers=true
 
       - name: Parse Test Results
         id: parse
