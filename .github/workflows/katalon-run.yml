@@ -110,7 +110,7 @@ jobs:
               \"passed\": ${PASSED},
               \"failed\": ${FAILED},
               \"skipped\": 0,
- \"results\": []
+              \"results\": []
             }")
           
           echo "HTTP Status: $HTTP_CODE"
@@ -121,4 +121,4 @@ jobs:
             exit 1
           fi
           
-          echo "✅ Callback sent successfully"
+          echo "Callback sent successfully"
