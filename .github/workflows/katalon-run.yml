@@ -20,13 +20,23 @@ jobs:
           echo "Download URL: ${{ github.event.client_payload.download_url }}"
           echo "Test Run ID: ${{ github.event.client_payload.test_run_id }}"
 
-      - name: Download Katalon Project
+      - name: Download Katalon Project (Debug)
         run: |
           echo "Downloading project..."
-          curl -L -o project.zip "${{ github.event.client_payload.download_url }}"
-          unzip -q project.zip -d katalon-project
-          echo "Project downloaded and extracted"
-          ls -la katalon-project/
+          curl -v -L -o project.zip "${{ github.event.client_payload.download_url }}"
+          
+          echo ""
+          echo "=== File Info ==="
+          ls -lh project.zip
+          file project.zip
+          
+          echo ""
+          echo "=== First 200 bytes ==="
+          head -c 200 project.zip
+          
+          echo ""
+          echo "=== Attempting unzip ==="
+          unzip -q project.zip -d katalon-project || echo "Unzip failed"
 
       - name: Simulate Test Run (Mock)
         id: test_run
