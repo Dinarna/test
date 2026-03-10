@@ -1,0 +1,177 @@
+:root {
+    --bg-color: #274EDB;
+    --bg-grad-dark: #1E3BA3;
+    --text-color: #FFFFFF;
+    --input-border: rgba(255, 255, 255, 1);
+    --input-placeholder: rgba(255, 255, 255, 0.7);
+    --btn-bg: #FFFFFF;
+    --btn-text: #274EDB;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Background vectors */
+.background-decor {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+    background: linear-gradient(135deg, #1d3eae 0%, #3058eb 100%);
+}
+
+.shape-1 {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.6;
+}
+
+.shape-2 {
+    position: absolute;
+    bottom: -150px;
+    left: -150px;
+    width: 800px;
+    height: 800px;
+    opacity: 0.8;
+}
+
+/* Form Container */
+.login-container {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 360px;
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.logo {
+    margin-bottom: 3rem;
+    display: flex;
+    justify-content: center;
+}
+
+.logo svg {
+    width: 72px;
+    height: 72px;
+    stroke: #FFFFFF;
+    stroke-width: 1.5px;
+    filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1));
+}
+
+.login-form {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.input-group {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.input-group i {
+    position: absolute;
+    left: 1.25rem;
+    font-size: 1.25rem;
+    color: var(--text-color);
+    pointer-events: none;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 1rem 1rem 1rem 3.5rem;
+    background: transparent;
+    border: 1px solid var(--input-border);
+    border-radius: 2px;
+    color: var(--text-color);
+    font-size: 0.85rem;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    outline: none;
+    transition: all 0.3s ease;
+}
+
+.input-group input::placeholder {
+    color: var(--input-placeholder);
+    text-transform: uppercase;
+}
+
+.input-group input:focus {
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.5);
+    background: rgba(255,255,255,0.05);
+}
+
+.login-btn {
+    width: 100%;
+    padding: 1rem;
+    margin-top: 0.5rem;
+    background: var(--btn-bg);
+    color: var(--btn-text);
+    border: none;
+    border-radius: 2px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.login-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+    background-color: #f8f9fa;
+}
+
+.login-btn:active {
+    transform: translateY(0);
+}
+
+.forgot-password {
+    text-align: center;
+    color: var(--text-color);
+    text-decoration: none;
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+    transition: opacity 0.2s ease;
+}
+
+.forgot-password:hover {
+    opacity: 0.8;
+    text-decoration: underline;
+}
+
+/* Adjustments for better alignment based on extracted bounding boxes */
+@media (min-width: 768px) {
+    .login-container {
+        max-width: 380px;
+    }
+}
