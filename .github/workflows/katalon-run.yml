@@ -58,9 +58,10 @@ jobs:
 
           PROJECT_NAME="${{ steps.fetch.outputs.PROJECT_NAME }}"
           BASE_URL="${{ steps.fetch.outputs.BASE_URL }}"
+          TEST_COUNT=${{ steps.fetch.outputs.TEST_COUNT }}
 
           # Create .project file
-          cat > katalon-project/.project << 'EOF'
+          cat > katalon-project/.project << 'EOFPRJ'
           <?xml version="1.0" encoding="UTF-8"?>
           <projectDescription>
             <name>TestProject</name>
@@ -76,20 +77,20 @@ jobs:
               <nature>org.eclipse.jdt.core.javanature</nature>
             </natures>
           </projectDescription>
-          EOF
+          EOFPRJ
 
           # Create project file
-          cat > katalon-project/TestProject.prj << EOF
+          cat > katalon-project/TestProject.prj << 'EOFPRJFILE'
           <?xml version="1.0" encoding="UTF-8"?>
           <Project>
              <description></description>
              <name>TestProject</name>
              <type>WEBUI</type>
           </Project>
-          EOF
+          EOFPRJFILE
 
           # Create GlobalVariable profile
-          cat > katalon-project/Profiles/default.glbl << EOF
+          cat > katalon-project/Profiles/default.glbl << 'EOFGLBL'
           <?xml version="1.0" encoding="UTF-8"?>
           <GlobalVariableEntities>
              <defaultProfile>true</defaultProfile>
@@ -99,7 +100,7 @@ jobs:
                 <name>base_url</name>
              </GlobalVariableEntity>
           </GlobalVariableEntities>
-          EOF
+          EOFGLBL
 
           # Write test scripts
           if [ -f scripts.json ]; then
@@ -124,37 +125,31 @@ jobs:
             done
           fi
 
-          # Create test suite
-          TEST_COUNT=${{ steps.fetch.outputs.TEST_COUNT }}
+          # Create test suite (simplified)
           if [ "$TEST_COUNT" -gt 0 ]; then
-            # Create test suite with all scripts
-            cat > katalon-project/Test\ Suites/AllTests.ts << 'EOF'
-            <?xml version="1.0" encoding="UTF-8"?>
-            <TestSuiteEntity>
-               <description></description>
-               <name>AllTests</name>
-               <tag></tag>
-               <isRerun>false</isRerun>
-               <mailRecipient></mailRecipient>
-               <numberOfRerun>3</numberOfRerun>
-               <numberOfTestCases>1</numberOfTestCases>
-               <pageLoadTimeout>30</pageLoadTimeout>
-               <pageLoadTimeoutDefault>true</pageLoadTimeoutDefault>
-               <rerunFailedTestCasesOnly>false</rerunFailedTestCasesOnly>
-               <rerunImmediately>true</rerunImmediately>
-               <testCaseLink>
-                  <guid>12345678-1234-1234-1234-123456789012</guid>
-                  <isReuseDriver>false</isReuseDriver>
-                  <isRun>true</isRun>
-                  <testCaseId>Test Cases/ST_TC_001</testCaseId>
-               </testCaseLink>
-               <testCaseIds>
-                  <id>12345678-1234-1234-1234-123456789012</id>
-             testSuitePath="Test Suites/AllTests" \
-            -  </testCaseIds>
-               <timeoutInSeconds>0</timeoutInSeconds>
-            </TestSuiteEntity>
-            EOF
+            cat > "katalon-project/Test Suites/AllTests.ts" << 'EOFTS'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <TestSuiteEntity>
+             <description></description>
+             <name>AllTests</name>
+             <tag></tag>
+             <isRerun>false</isRerun>
+             <pageLoadTimeout>30</pageLoadTimeout>
+             <pageLoadTimeoutDefault>true</pageLoadTimeoutDefault>
+             <rerunFailedTestCasesOnly>false</rerunFailedTestCasesOnly>
+             <rerunImmediately>true</rerunImmediately>
+             <testCaseLink>
+                <guid>12345678-1234-1234-1234-123456789012</guid>
+                <isReuseDriver>false</isReuseDriver>
+                <isRun>true</isRun>
+                <testCaseId>Test Cases/ST_TC_001</testCaseId>
+             </testCaseLink>
+             <testCaseIds>
+                <id>12345678-1234-1234-1234-123456789012</id>
+             </testCaseIds>
+             <timeoutInSeconds>0</timeoutInSeconds>
+          </TestSuiteEntity>
+          EOFTS
           fi
 
           echo "✅ Project structure built"
@@ -184,6 +179,7 @@ jobs:
             katalonc \
             -apiKey="${KATALON_API_KEY}" \
             -projectPath=/katalon/katalon/source \
+            -testSuitePath="Test Suites/AllTests" \
             -browserType="${{ github.event.client_payload.browser_type }}" \
             -retry=0 \
             -statusDelay=15 \
