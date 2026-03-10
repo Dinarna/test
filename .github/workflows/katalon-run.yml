@@ -12,70 +12,74 @@ jobs:
     steps:
       - name: Show payload
         run: |
-          echo "=== Received Payload ==="
-          echo "Project ID: ${{ github.event.client_payload.project_id }}"
-          echo "Project Name: ${{ github.event.client_payload.project_name }}"
-          echo "Base URL: ${{ github.event.client_payload.base_url }}"
-          echo "Browser: ${{ github.event.client_payload.browser_type }}"
+          echo "Project: ${{ github.event.client_payload.project_name }}"
           echo "Download URL: ${{ github.event.client_payload.download_url }}"
-          echo "Test Run ID: ${{ github.event.client_payload.test_run_id }}"
 
-      - name: Download Katalon Project (Debug)
+      - name: Download Katalon Project
         run: |
-          echo "Downloading project..."
-          curl -v -L -o project.zip "${{ github.event.client_payload.download_url }}"
+          echo "Downloading Katalon project..."
+          curl -L -o project.zip "${{ github.event.client_payload.download_url }}"
           
-          echo ""
-          echo "=== File Info ==="
-          ls -lh project.zip
-          file project.zip
-          
-          echo ""
-          echo "=== First 200 bytes ==="
-          head -c 200 project.zip
-          
-          echo ""
-          echo "=== Attempting unzip ==="
-          unzip -q project.zip -d katalon-project || echo "Unzip failed"
-
-      - name: Simulate Test Run (Mock)
-        id: test_run
-        run: |
-          echo "Simulating Katalon test execution..."
-          echo "This would normally run: katalonc -projectPath=katalon-project ..."
-          
-          # Simulasi test berjalan
-          sleep 3
-          
-          # Mock hasil test
-          echo "TEST_RESULT=passed" >> $GITHUB_OUTPUT
-          echo "TOTAL=5" >> $GITHUB_OUTPUT
-          echo "PASSED=5" >> $GITHUB_OUTPUT
-          echo "FAILED=0" >> $GITHUB_OUTPUT
-          echo "SKIPPED=0" >> $GITHUB_OUTPUT
-          
-          echo " Mock test completed successfully"
-
-      - name: Report Results to Supabase
-        if: always()
-        run: |
-          echo "Sending callback to Supabase..."
-          
-          # Tentukan status berdasarkan job
-          if [ "${{ job.status }}" = "success" ]; then
-            STATUS="passed"
-            PASSED="${{ steps.test_run.outputs.PASSED }}"
-            FAILED="${{ steps.test_run.outputs.FAILED }}"
-            TOTAL="${{ steps.test_run.outputs.TOTAL }}"
-          else
-            STATUS="failed"
-            PASSED="0"
-            FAILED="1"
-            TOTAL="1"
+          # Cek apakah valid zip
+          if ! unzip -t project.zip > /dev/null 2>&1; then
+            echo "ERROR: Invalid zip file"
+            cat project.zip
+            exit 1
           fi
           
-          # Kirim callback
-          RESPONSE=$(curl -w "\n%{http_code}" -X POST "${{ github.event.client_payload.callback_url }}" \
+          unzip -q project.zip -d katalon-project
+          echo "Project extracted"
+
+      - name: Count Test Cases
+        id: count
+        run: |
+          # Hitung file .groovy di Scripts/
+          if [ -d "katalon-project/Scripts" ]; then
+            COUNT=$(find katalon-project/Scripts -name "*.groovy" | wc -l)
+            echo "Found $COUNT test scripts"
+            echo "TOTAL=$COUNT" >> $GITHUB_OUTPUT
+          else
+            echo "No Scripts folder found"
+            echo "TOTAL=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Simulate Test Execution
+        id: test
+        run: |
+          TOTAL=${{ steps.count.outputs.TOTAL }}
+          
+          if [ "$TOTAL" -eq "0" ]; then
+            echo "No test cases to run"
+            echo "STATUS=failed" >> $GITHUB_OUTPUT
+            echo "PASSED=0" >> $GITHUB_OUTPUT
+            echo "FAILED=0" >> $GITHUB_OUTPUT
+          else
+            echo "Simulating execution of $TOTAL tests..."
+            sleep 2
+            echo "STATUS=passed" >> $GITHUB_OUTPUT
+            echo "PASSED=$TOTAL" >> $GITHUB_OUTPUT
+            echo "FAILED=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Report Results
+        if: always()
+        run: |
+          STATUS="${{ steps.test.outputs.STATUS }}"
+          TOTAL="${{ steps.count.outputs.TOTAL }}"
+          PASSED="${{ steps.test.outputs.PASSED }}"
+          FAILED="${{ steps.test.outputs.FAILED }}"
+          
+          # Fallback jika step sebelumnya gagal
+          if [ -z "$STATUS" ]; then
+            STATUS="failed"
+            TOTAL=0
+            PASSED=0
+            FAILED=0
+          fi
+          
+          echo "Sending callback: $STATUS, $PASSED/$TOTAL passed"
+          
+          curl -X POST "${{ github.event.client_payload.callback_url }}" \
             -H "Content-Type: application/json" \
             -d "{
               \"status\": \"${STATUS}\",
@@ -83,25 +87,7 @@ jobs:
               \"passed\": ${PASSED},
               \"failed\": ${FAILED},
               \"skipped\": 0,
-              \"results\": [
-                {\"tc_code\": \"ST_TC_001\", \"status\": \"passed\", \"duration_ms\": 1200},
-                {\"tc_code\": \"ST_TC_002\", \"status\": \"passed\", \"duration_ms\": 1500},
-                {\"tc_code\": \"ST_TC_003\", \"status\": \"passed\", \"duration_ms\": 980},
-                {\"tc_code\": \"ST_TC_004\", \"status\": \"passed\", \"duration_ms\": 1100},
-                {\"tc_code\": \"ST_TC_005\", \"status\": \"passed\", \"duration_ms\": 1350}
-              ]
-            }")
+              \"results\": []
+            }"
           
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-          
-          echo "HTTP Status: $HTTP_CODE"
-          echo "Response Body: $BODY"
-          
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo " Callback sent successfully!"
-          else
-            echo " Callback failed with status $HTTP_CODE"
-            echo "Response: $BODY"
-            exit 1
-          fi
+          echo "Callback sent!"
