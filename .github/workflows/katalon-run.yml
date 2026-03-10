@@ -1,0 +1,59 @@
+name: Katalon Test Run
+
+on:
+  repository_dispatch:
+    types: [katalon-test-run]
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Show payload
+        run: |
+          echo "project_id: ${{ github.event.client_payload.project_id }}"
+          echo "download_url: ${{ github.event.client_payload.download_url }}"
+          echo "callback_url: [hidden]"
+
+      - name: Download project zip
+        run: |
+          curl -L -o project.zip "${{ github.event.client_payload.download_url }}"
+          unzip -o project.zip -d katalon-project
+          ls -la katalon-project
+
+      # Opsi 1: pakai action resmi Katalon
+      - name: Run Katalon
+        id: run_katalon
+        uses: katalon-studio/katalon-studio-github-action@v3
+        with:
+          version: "9.0.0"
+          projectPath: katalon-project
+          args: '-browserType="Chrome (headless)" -retry=0 -statusDelay=15 -reportFolder="reports"'
+        env:
+          KATALON_API_KEY: ${{ secrets.KATALON_API_KEY }}
+
+      # Fallback status dan callback ke Supabase
+      - name: Report result back
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            STATUS="passed"
+            PASSED=1
+            FAILED=0
+          else
+            STATUS="failed"
+            PASSED=0
+            FAILED=1
+          fi
+
+          curl -X POST "${{ github.event.client_payload.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"status\": \"${STATUS}\",
+              \"total_tests\": $((PASSED+FAILED)),
+              \"passed\": ${PASSED},
+              \"failed\": ${FAILED},
+              \"skipped\": 0,
+              \"results\": []
+            }"
