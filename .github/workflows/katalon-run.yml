@@ -8,100 +8,88 @@ jobs:
   run-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    
+    env:
+      SUPABASE_URL: https://btoztiljwmnzjynndxlj.supabase.co
+      SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0b3p0aWxqd21uemp5bm5keGxqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwMjE1MzQsImV4cCI6MjA4ODU5NzUzNH0.qXMSBvusniE732G1EAbEEybG2rQqKjIO__NDoC5Vj6U
 
     steps:
-      - name: Show Payload
+      - name: Show Info
         run: |
           echo "Project: ${{ github.event.client_payload.project_name }}"
           echo "Project ID: ${{ github.event.client_payload.project_id }}"
 
-      - name: Download Katalon Project Data
-        id: download
+      - name: Fetch Katalon Scripts from Database
+        id: fetch
         run: |
-          echo "Downloading project data..."
+          PROJECT_ID="${{ github.event.client_payload.project_id }}"
           
-          curl -f -o project.json "${{ github.event.client_payload.download_url }}"
+          echo "Fetching scripts for project $PROJECT_ID..."
           
-          if [ $? -ne 0 ]; then
-            echo "ERROR: Download failed"
-            cat project.json || echo "No response file"
+          # Fetch katalon_scripts via REST API
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/katalon_scripts?project_id=eq.${PROJECT_ID}&select=tc_code,content,file_path" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Failed to fetch scripts (HTTP $HTTP_CODE)"
+            echo "$BODY"
             exit 1
           fi
           
-          echo "Project data downloaded"
-          
-          # Parse test count
-          TEST_COUNT=$(jq '.scripts | length' project.json)
+          # Count scripts
+          TEST_COUNT=$(echo "$BODY" | jq '. | length')
           echo "Found $TEST_COUNT test script(s)"
           echo "TEST_COUNT=$TEST_COUNT" >> $GITHUB_OUTPUT
           
-          # Show first script for debugging
-          echo "First script:"
-          jq -r '.scripts[0].tc_code' project.json || echo "No scripts"
-
-      - name: Build Katalon Project Structure
-        run: |
-          echo "Building Katalon project structure..."
-          mkdir -p katalon-project/{Scripts,Profiles,"Object Repository","Test Suites"}
-          
-          # Extract scripts from JSON
-          jq -r '.scripts[] | "\(.file_path)\n---CONTENT---\n\(.content)\n---END---"' project.json | while IFS= read -r line; do
-            if [[ "$line" == "---CONTENT---" ]]; then
-              reading_content=true
-              content=""
-              continue
-            fi
-            if [[ "$line" == "---END---" ]]; then
-              echo "$content" > "katalon-project/$filepath"
-              reading_content=false
-              continue
-            fi
-            if [[ "$reading_content" == true ]]; then
-              content+="$line"$'\n'
-            else
-              filepath="$line"
-              mkdir -p "katalon-project/$(dirname "$filepath")"
-            fi
-          done
-          
-          echo "Project structure built"
-          ls -la katalon-project/
+          # Show first script
+          if [ "$TEST_COUNT" -gt 0 ]; then
+            FIRST_TC=$(echo "$BODY" | jq -r '.[0].tc_code')
+            echo "First test: $FIRST_TC"
+          fi
 
       - name: Simulate Test Execution
         id: test
         run: |
-          TEST_COUNT=${{ steps.download.outputs.TEST_COUNT }}
+          TEST_COUNT=${{ steps.fetch.outputs.TEST_COUNT }}
+          
+          if [ "$TEST_COUNT" -eq 0 ]; then
+            echo "ERROR: No test scripts found"
+            echo "STATUS=failed" >> $GITHUB_OUTPUT
+            echo "PASSED=0" >> $GITHUB_OUTPUT
+            echo "FAILED=1" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           
           echo "Simulating execution of $TEST_COUNT test(s)..."
           sleep 2
+          echo "All tests passed (mock)"
           
-          if [ "$TEST_COUNT" -gt 0 ]; then
-            echo "STATUS=passed" >> $GITHUB_OUTPUT
-            echo "PASSED=$TEST_COUNT" >> $GITHUB_OUTPUT
-            echo "FAILED=0" >> $GITHUB_OUTPUT
-          else
-            echo "STATUS=failed" >> $GITHUB_OUTPUT
-            echo "PASSED=0" >> $GITHUB_OUTPUT
-            echo "FAILED=0" >> $GITHUB_OUTPUT
-          fi
+          echo "STATUS=passed" >> $GITHUB_OUTPUT
+          echo "PASSED=$TEST_COUNT" >> $GITHUB_OUTPUT
+          echo "FAILED=0" >> $GITHUB_OUTPUT
 
-      - name: Report Results to Supabase
+      - name: Send Results to Supabase
         if: always()
         run: |
           STATUS="${{ steps.test.outputs.STATUS }}"
           PASSED="${{ steps.test.outputs.PASSED }}"
           FAILED="${{ steps.test.outputs.FAILED }}"
-          TEST_COUNT="${{ steps.download.outputs.TEST_COUNT }}"
+          TEST_COUNT="${{ steps.fetch.outputs.TEST_COUNT }}"
           
-          # Fallback values
+          # Fallback jika step sebelumnya gagal
           STATUS="${STATUS:-failed}"
           PASSED="${PASSED:-0}"
           FAILED="${FAILED:-0}"
           TEST_COUNT="${TEST_COUNT:-0}"
           
-          echo "Sending callback: $STATUS, $PASSED/$TEST_COUNT passed"
+          echo "Sending callback: $STATUS ($PASSED/$TEST_COUNT passed)"
           
-          HTTP_CODE=$(curl -w "%{http_code}" -o response.txt \
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
             -X POST "${{ github.event.client_payload.callback_url }}" \
             -H "Content-Type: application/json" \
             -d "{
@@ -113,12 +101,15 @@ jobs:
               \"results\": []
             }")
           
-          echo "HTTP Status: $HTTP_CODE"
-          cat response.txt
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
           
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "ERROR: Callback failed"
+          echo "Callback HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Callback sent successfully!"
+          else
+            echo "❌ Callback failed"
             exit 1
           fi
-          
-          echo "Callback sent successfully"
