@@ -263,6 +263,10 @@ jobs:
           TEST_COUNT=${{ steps.fetch.outputs.TEST_COUNT }}
           KATALON_EXIT=${{ steps.katalon.outcome }}
 
+          # Default detailed result payload for UI
+          echo "[]" > results.json
+          echo "ERROR_MESSAGE=" >> $GITHUB_OUTPUT
+
           echo "Katalon execution outcome: $KATALON_EXIT"
           echo "Test count from Supabase: $TEST_COUNT"
 
@@ -281,6 +285,59 @@ jobs:
             
             PASSED=$((TOTAL - FAILURES - ERRORS - SKIPPED))
             FAILED=$((FAILURES + ERRORS))
+
+            # Build per-test details from JUnit for UI
+            node <<'EOFNODE'
+            const fs = require('fs');
+            const xml = fs.readFileSync('reports/JUnit_Report.xml', 'utf8');
+            const results = [];
+            const testcaseRegex = /<testcase\b([^>]*)>([\s\S]*?)<\/testcase>|<testcase\b([^>]*)\/>/g;
+
+            function attr(str, key) {
+              const m = str && str.match(new RegExp(`${key}="([^"]*)"`));
+              return m ? m[1] : '';
+            }
+
+            let match;
+            while ((match = testcaseRegex.exec(xml)) !== null) {
+              const attrs = match[1] || match[3] || '';
+              const body = match[2] || '';
+              const name = attr(attrs, 'name') || 'Unnamed Test';
+              const className = attr(attrs, 'classname');
+              const timeSec = parseFloat(attr(attrs, 'time') || '0') || 0;
+
+              const failureMatch = body.match(/<failure\b[^>]*>([\s\S]*?)<\/failure>/);
+              const errorMatch = body.match(/<error\b[^>]*>([\s\S]*?)<\/error>/);
+              const skippedMatch = body.match(/<skipped\b[^>]*\/?>([\s\S]*?)<\/skipped>|<skipped\b[^>]*\/>/);
+
+              let status = 'passed';
+              let errorMessage = null;
+              if (failureMatch) {
+                status = 'failed';
+                errorMessage = failureMatch[1].replace(/\s+/g, ' ').trim().slice(0, 1000);
+              } else if (errorMatch) {
+                status = 'failed';
+                errorMessage = errorMatch[1].replace(/\s+/g, ' ').trim().slice(0, 1000);
+              } else if (skippedMatch) {
+                status = 'skipped';
+              }
+
+              results.push({
+                tc_code: name,
+                classname: className || undefined,
+                status,
+                duration_ms: Math.round(timeSec * 1000),
+                error_message: errorMessage,
+              });
+            }
+
+            fs.writeFileSync('results.json', JSON.stringify(results));
+            EOFNODE
+
+            FIRST_FAILURE=$(jq -r '[.[] | select(.status == "failed") | .error_message][0] // ""' results.json)
+            if [ -n "$FIRST_FAILURE" ]; then
+              echo "ERROR_MESSAGE=$FIRST_FAILURE" >> $GITHUB_OUTPUT
+            fi
             
             echo "TOTAL=$TOTAL" >> $GITHUB_OUTPUT
             echo "PASSED=$PASSED" >> $GITHUB_OUTPUT
@@ -305,6 +362,7 @@ jobs:
               echo "PASSED=0" >> $GITHUB_OUTPUT
               echo "FAILED=$TEST_COUNT" >> $GITHUB_OUTPUT
               echo "SKIPPED=0" >> $GITHUB_OUTPUT
+              echo "ERROR_MESSAGE=Katalon execution failed before JUnit report was generated" >> $GITHUB_OUTPUT
             else
               echo "Using simulation results (Katalon API key not configured)"
               echo "STATUS=passed" >> $GITHUB_OUTPUT
@@ -323,6 +381,7 @@ jobs:
           PASSED="${{ steps.parse.outputs.PASSED }}"
           FAILED="${{ steps.parse.outputs.FAILED }}"
           SKIPPED="${{ steps.parse.outputs.SKIPPED }}"
+          ERROR_MESSAGE="${{ steps.parse.outputs.ERROR_MESSAGE }}"
 
           # Fallback values
           STATUS="${STATUS:-passed}"
@@ -333,6 +392,8 @@ jobs:
 
           echo "Sending callback: $STATUS ($PASSED/$TOTAL passed, $FAILED failed)"
 
+          RESULTS_JSON=$(cat results.json 2>/dev/null || echo "[]")
+
           HTTP_CODE=$(curl -s -w "%{http_code}" -o response.txt \
             -X POST "${{ github.event.client_payload.callback_url }}" \
             -H "Content-Type: application/json" \
@@ -342,7 +403,8 @@ jobs:
               \"passed\": ${PASSED},
               \"failed\": ${FAILED},
               \"skipped\": ${SKIPPED},
-              \"results\": []
+              \"error_message\": \"${ERROR_MESSAGE}\",
+              \"results\": ${RESULTS_JSON}
             }")
 
           echo "HTTP Status: $HTTP_CODE"
