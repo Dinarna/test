@@ -352,18 +352,29 @@ jobs:
 
           RESULTS_JSON=$(cat results.json 2>/dev/null || echo "[]")
 
+          # Build JSON payload with jq to properly escape all strings
+          PAYLOAD=$(jq -n \
+            --arg status "$STATUS" \
+            --argjson total "$TOTAL" \
+            --argjson passed "$PASSED" \
+            --argjson failed "$FAILED" \
+            --argjson skipped "$SKIPPED" \
+            --arg error_message "$ERROR_MESSAGE" \
+            --argjson results "$RESULTS_JSON" \
+            '{
+              status: $status,
+              total_tests: $total,
+              passed: $passed,
+              failed: $failed,
+              skipped: $skipped,
+              error_message: $error_message,
+              results: $results
+            }')
+
           HTTP_CODE=$(curl -s -w "%{http_code}" -o response.txt \
             -X POST "${{ github.event.client_payload.callback_url }}" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"status\": \"${STATUS}\",
-              \"total_tests\": ${TOTAL},
-              \"passed\": ${PASSED},
-              \"failed\": ${FAILED},
-              \"skipped\": ${SKIPPED},
-              \"error_message\": \"${ERROR_MESSAGE}\",
-              \"results\": ${RESULTS_JSON}
-            }")
+            -d "$PAYLOAD")
 
           echo "HTTP Status: $HTTP_CODE"
           cat response.txt
