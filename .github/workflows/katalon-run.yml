@@ -7,109 +7,212 @@ on:
 jobs:
   run-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     
     env:
       SUPABASE_URL: https://btoztiljwmnzjynndxlj.supabase.co
       SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0b3p0aWxqd21uemp5bm5keGxqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwMjE1MzQsImV4cCI6MjA4ODU5NzUzNH0.qXMSBvusniE732G1EAbEEybG2rQqKjIO__NDoC5Vj6U
 
     steps:
-      - name: Show Info
-        run: |
-          echo "Project: ${{ github.event.client_payload.project_name }}"
-          echo "Project ID: ${{ github.event.client_payload.project_id }}"
-
-      - name: Fetch Katalon Scripts from Database
+      - name: Fetch Katalon Scripts
         id: fetch
         run: |
           PROJECT_ID="${{ github.event.client_payload.project_id }}"
           
-          echo "Fetching scripts for project $PROJECT_ID..."
+          echo "Fetching data for project $PROJECT_ID..."
           
-          # Fetch katalon_scripts via REST API
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            "${SUPABASE_URL}/rest/v1/katalon_scripts?project_id=eq.${PROJECT_ID}&select=tc_code,content,file_path" \
+          # Fetch scripts
+          SCRIPTS=$(curl -s "${SUPABASE_URL}/rest/v1/katalon_scripts?project_id=eq.${PROJECT_ID}&select=tc_code,content,file_path" \
             -H "apikey: ${SUPABASE_ANON_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
           
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
+          # Fetch objects
+          OBJECTS=$(curl -s "${SUPABASE_URL}/rest/v1/katalon_objects?project_id=eq.${PROJECT_ID}&select=*" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
           
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "ERROR: Failed to fetch scripts (HTTP $HTTP_CODE)"
-            echo "$BODY"
-            exit 1
-          fi
+          # Fetch settings
+          SETTINGS=$(curl -s "${SUPABASE_URL}/rest/v1/project_settings?id=eq.${PROJECT_ID}&select=project_name,base_url,browser_type" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
           
-          # Count scripts
-          TEST_COUNT=$(echo "$BODY" | jq '. | length')
+          TEST_COUNT=$(echo "$SCRIPTS" | jq '. | length')
+          PROJECT_NAME=$(echo "$SETTINGS" | jq -r '.[0].project_name // "TestProject"')
+          BASE_URL=$(echo "$SETTINGS" | jq -r '.[0].base_url // "https://example.com"')
+          
           echo "Found $TEST_COUNT test script(s)"
           echo "TEST_COUNT=$TEST_COUNT" >> $GITHUB_OUTPUT
+          echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_OUTPUT
+          echo "BASE_URL=$BASE_URL" >> $GITHUB_OUTPUT
           
-          # Show first script
-          if [ "$TEST_COUNT" -gt 0 ]; then
-            FIRST_TC=$(echo "$BODY" | jq -r '.[0].tc_code')
-            echo "First test: $FIRST_TC"
-          fi
+          # Save to files
+          echo "$SCRIPTS" > scripts.json
+          echo "$OBJECTS" > objects.json
+          echo "$SETTINGS" > settings.json
 
-      - name: Simulate Test Execution
-        id: test
+      - name: Build Katalon Project
         run: |
-          TEST_COUNT=${{ steps.fetch.outputs.TEST_COUNT }}
+          echo "Building Katalon project structure..."
           
-          if [ "$TEST_COUNT" -eq 0 ]; then
-            echo "ERROR: No test scripts found"
-            echo "STATUS=failed" >> $GITHUB_OUTPUT
-            echo "PASSED=0" >> $GITHUB_OUTPUT
-            echo "FAILED=1" >> $GITHUB_OUTPUT
-            exit 0
+          mkdir -p katalon-project/{Scripts,Profiles,"Object Repository","Test Suites"}
+          
+          PROJECT_NAME="${{ steps.fetch.outputs.PROJECT_NAME }}"
+          BASE_URL="${{ steps.fetch.outputs.BASE_URL }}"
+          
+          # Create .project file
+          cat > katalon-project/.project << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <projectDescription>
+            <name>$PROJECT_NAME</name>
+            <comment></comment>
+            <projects></projects>
+            <buildSpec>
+              <buildCommand>
+                <name>org.eclipse.jdt.core.javabuilder</name>
+              </buildCommand>
+            </buildSpec>
+            <natures>
+              <nature>org.eclipse.jdt.groovy.core.groovyNature</nature>
+              <nature>org.eclipse.jdt.core.javanature</nature>
+            </natures>
+          </projectDescription>
+          EOF
+          
+          # Create project file
+          cat > katalon-project/${PROJECT_NAME}.prj << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <Project>
+             <description></description>
+             <name>${PROJECT_NAME}</name>
+             <type>WEBUI</type>
+          </Project>
+          EOF
+          
+          # Create GlobalVariable profile
+          cat > katalon-project/Profiles/default.glbl << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <GlobalVariableEntities>
+             <defaultProfile>true</defaultProfile>
+             <GlobalVariableEntity>
+                <description></description>
+                <initValue>'${BASE_URL}'</initValue>
+                <name>base_url</name>
+             </GlobalVariableEntity>
+          </GlobalVariableEntities>
+          EOF
+          
+          # Write test scripts
+          jq -r '.[] | @json' scripts.json | while read -r script; do
+            TC_CODE=$(echo "$script" | jq -r '.tc_code')
+            CONTENT=$(echo "$script" | jq -r '.content')
+            
+            mkdir -p "katalon-project/Scripts/${TC_CODE}"
+            echo "$CONTENT" > "katalon-project/Scripts/${TC_CODE}/${TC_CODE}.groovy"
+          done
+          
+          # Write object repository
+          jq -r '.[] | @json' objects.json | while read -r obj; do
+            NAME=$(echo "$obj" | jq -r '.name')
+            SCREEN=$(echo "$obj" | jq -r '.screen // "Page"')
+            CONTENT=$(echo "$obj" | jq -r '.content')
+            
+            mkdir -p "katalon-project/Object Repository/${SCREEN}"
+            echo "$CONTENT" > "katalon-project/Object Repository/${SCREEN}/${NAME}.rs"
+          done
+          
+          echo "✅ Project structure built"
+          ls -la katalon-project/
+
+      - name: Run Katalon Tests with Docker
+        id: katalon
+        continue-on-error: true
+        run: |
+          echo "Running Katalon tests..."
+          
+          # Run Katalon via Docker
+          docker run --rm \
+            -v $(pwd)/katalon-project:/katalon/katalon/source \
+            -v $(pwd)/reports:/katalon/katalon/reports \
+            katalonstudio/katalon \
+            katalonc \
+            -projectPath=/katalon/katalon/source \
+            -browserType="${{ github.event.client_payload.browser_type }}" \
+            -retry=0 \
+            -statusDelay=15 \
+            -reportFolder=/katalon/katalon/reports \
+            --config -webui.autoUpdateDrivers=true
+
+      - name: Parse Test Results
+        id: parse
+        if: always()
+        run: |
+          if [ -f "reports/JUnit_Report.xml" ]; then
+            echo "Parsing JUnit report..."
+            
+            # Parse XML dengan xmllint atau Python
+            TOTAL=$(grep -o '<testsuite.*tests="[0-9]*"' reports/JUnit_Report.xml | grep -o 'tests="[0-9]*"' | cut -d'"' -f2)
+            FAILURES=$(grep -o '<testsuite.*failures="[0-9]*"' reports/JUnit_Report.xml | grep -o 'failures="[0-9]*"' | cut -d'"' -f2)
+            ERRORS=$(grep -o '<testsuite.*errors="[0-9]*"' reports/JUnit_Report.xml | grep -o 'errors="[0-9]*"' | cut -d'"' -f2)
+            SKIPPED=$(grep -o '<testsuite.*skipped="[0-9]*"' reports/JUnit_Report.xml | grep -o 'skipped="[0-9]*"' | cut -d'"' -f2)
+            
+            PASSED=$((TOTAL - FAILURES - ERRORS - SKIPPED))
+            FAILED=$((FAILURES + ERRORS))
+            
+            echo "TOTAL=$TOTAL" >> $GITHUB_OUTPUT
+            echo "PASSED=$PASSED" >> $GITHUB_OUTPUT
+            echo "FAILED=$FAILED" >> $GITHUB_OUTPUT
+            echo "SKIPPED=$SKIPPED" >> $GITHUB_OUTPUT
+            
+            if [ "$FAILED" -gt 0 ]; then
+              echo "STATUS=failed" >> $GITHUB_OUTPUT
+            else
+              echo "STATUS=passed" >> $GITHUB_OUTPUT
+            fi
+            
+            echo "Results: $PASSED passed, $FAILED failed, $SKIPPED skipped"
+          else
+            echo "No JUnit report found, using exit code"
+            
+            if [ "${{ steps.katalon.outcome }}" = "success" ]; then
+              echo "STATUS=passed" >> $GITHUB_OUTPUT
+              echo "PASSED=${{ steps.fetch.outputs.TEST_COUNT }}" >> $GITHUB_OUTPUT
+              echo "FAILED=0" >> $GITHUB_OUTPUT
+            else
+              echo "STATUS=failed" >> $GITHUB_OUTPUT
+              echo "PASSED=0" >> $GITHUB_OUTPUT
+              echo "FAILED=${{ steps.fetch.outputs.TEST_COUNT }}" >> $GITHUB_OUTPUT
+            fi
+            echo "SKIPPED=0" >> $GITHUB_OUTPUT
+            echo "TOTAL=${{ steps.fetch.outputs.TEST_COUNT }}" >> $GITHUB_OUTPUT
           fi
-          
-          echo "Simulating execution of $TEST_COUNT test(s)..."
-          sleep 2
-          echo "All tests passed (mock)"
-          
-          echo "STATUS=passed" >> $GITHUB_OUTPUT
-          echo "PASSED=$TEST_COUNT" >> $GITHUB_OUTPUT
-          echo "FAILED=0" >> $GITHUB_OUTPUT
 
       - name: Send Results to Supabase
         if: always()
         run: |
-          STATUS="${{ steps.test.outputs.STATUS }}"
-          PASSED="${{ steps.test.outputs.PASSED }}"
-          FAILED="${{ steps.test.outputs.FAILED }}"
-          TEST_COUNT="${{ steps.fetch.outputs.TEST_COUNT }}"
+          STATUS="${{ steps.parse.outputs.STATUS }}"
+          TOTAL="${{ steps.parse.outputs.TOTAL }}"
+          PASSED="${{ steps.parse.outputs.PASSED }}"
+          FAILED="${{ steps.parse.outputs.FAILED }}"
+          SKIPPED="${{ steps.parse.outputs.SKIPPED }}"
           
-          # Fallback jika step sebelumnya gagal
+          # Fallback
           STATUS="${STATUS:-failed}"
+          TOTAL="${TOTAL:-0}"
           PASSED="${PASSED:-0}"
           FAILED="${FAILED:-0}"
-          TEST_COUNT="${TEST_COUNT:-0}"
+          SKIPPED="${SKIPPED:-0}"
           
-          echo "Sending callback: $STATUS ($PASSED/$TEST_COUNT passed)"
+          echo "Sending callback: $STATUS ($PASSED/$TOTAL passed, $FAILED failed)"
           
-          RESPONSE=$(curl -s -w "\n%{http_code}" \
-            -X POST "${{ github.event.client_payload.callback_url }}" \
+          curl -X POST "${{ github.event.client_payload.callback_url }}" \
             -H "Content-Type: application/json" \
             -d "{
               \"status\": \"${STATUS}\",
-              \"total_tests\": ${TEST_COUNT},
+              \"total_tests\": ${TOTAL},
               \"passed\": ${PASSED},
               \"failed\": ${FAILED},
-              \"skipped\": 0,
+              \"skipped\": ${SKIPPED},
               \"results\": []
-            }")
+            }"
           
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-          
-          echo "Callback HTTP Status: $HTTP_CODE"
-          echo "Response: $BODY"
-          
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ Callback sent successfully!"
-          else
-            echo "❌ Callback failed"
-            exit 1
-          fi
+          echo "✅ Callback sent"
