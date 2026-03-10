@@ -227,7 +227,11 @@ jobs:
             -browserType="${{ github.event.client_payload.browser_type }}" \
             -retry=0 \
             -statusDelay=15 \
-            -reportFolder=/katalon/katalon/reports
+            -reportFolder=/katalon/katalon/reports \
+            --config \
+            -webui.autoUpdateDrivers=true \
+            -proxy.option=NO_PROXY \
+            -webui.chrome.args="--headless=new,--no-sandbox,--disable-dev-shm-usage,--disable-gpu"
 
       - name: Parse Test Results
         id: parse
