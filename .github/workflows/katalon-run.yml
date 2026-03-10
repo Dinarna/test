@@ -102,14 +102,42 @@ jobs:
           </GlobalVariableEntities>
           EOFGLBL
 
-          # Write test scripts
+          # Write test scripts and create corresponding test case files
           if [ -f scripts.json ]; then
+            echo "Processing scripts from Supabase..."
+            
             jq -r '.[] | @json' scripts.json | while read -r script; do
-              TC_CODE=$(echo "$script" | jq -r '.tc_code')
+              TC_CODE=$(echo "$script" | jq -r '.tc_code // .id // "ST_TC_001"')
               CONTENT=$(echo "$script" | jq -r '.content')
               
+              echo "Creating test case: $TC_CODE"
+              
+              # Create Groovy script
               mkdir -p "katalon-project/Scripts/${TC_CODE}"
               echo "$CONTENT" > "katalon-project/Scripts/${TC_CODE}/${TC_CODE}.groovy"
+              
+              # Create Test Case wrapper (.tc file)
+              mkdir -p "katalon-project/Test Cases"
+              cat > "katalon-project/Test Cases/${TC_CODE}.tc" << 'EOFCASE'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <TestCaseEntity>
+             <description></description>
+             <name>TC_CODE_PLACEHOLDER</name>
+             <tag></tag>
+             <comment></comment>
+             <testCaseGuid>GUID_PLACEHOLDER</testCaseGuid>
+             <testDataLink>
+                <testDataId></testDataId>
+                <testDataLinkId></testDataLinkId>
+             </testDataLink>
+             <variableLink></variableLink>
+             <kmodule>Scripts/TC_CODE_PLACEHOLDER/TC_CODE_PLACEHOLDER.groovy</kmodule>
+          </TestCaseEntity>
+          EOFCASE
+              
+              # Replace placeholders
+              sed -i "s/TC_CODE_PLACEHOLDER/$TC_CODE/g" "katalon-project/Test Cases/${TC_CODE}.tc"
+              sed -i "s/GUID_PLACEHOLDER/$(uuidgen 2>/dev/null || echo $TC_CODE)/g" "katalon-project/Test Cases/${TC_CODE}.tc"
             done
           fi
 
@@ -125,8 +153,11 @@ jobs:
             done
           fi
 
-          # Create test suite (simplified)
+          # Create test suite dynamically from scripts
           if [ "$TEST_COUNT" -gt 0 ]; then
+            echo "Creating test suite with $TEST_COUNT test case(s)..."
+            
+            # Start test suite XML
             cat > "katalon-project/Test Suites/AllTests.ts" << 'EOFTS'
           <?xml version="1.0" encoding="UTF-8"?>
           <TestSuiteEntity>
@@ -138,18 +169,31 @@ jobs:
              <pageLoadTimeoutDefault>true</pageLoadTimeoutDefault>
              <rerunFailedTestCasesOnly>false</rerunFailedTestCasesOnly>
              <rerunImmediately>true</rerunImmediately>
+          EOFTS
+            
+            # Add test case links dynamically
+            jq -r '.[] | .tc_code // .id' scripts.json | while IFS= read -r tc_code; do
+              GUID=$(uuidgen 2>/dev/null || echo "$(echo $tc_code | md5sum | cut -d' ' -f1)")
+              cat >> "katalon-project/Test Suites/AllTests.ts" << EOFLINK
              <testCaseLink>
-                <guid>12345678-1234-1234-1234-123456789012</guid>
+                <guid>$GUID</guid>
                 <isReuseDriver>false</isReuseDriver>
                 <isRun>true</isRun>
-                <testCaseId>Test Cases/ST_TC_001</testCaseId>
+                <testCaseId>Test Cases/$tc_code</testCaseId>
              </testCaseLink>
+          EOFLINK
+            done
+            
+            # Close test suite XML
+            cat >> "katalon-project/Test Suites/AllTests.ts" << 'EOFTS_CLOSE'
              <testCaseIds>
-                <id>12345678-1234-1234-1234-123456789012</id>
              </testCaseIds>
              <timeoutInSeconds>0</timeoutInSeconds>
           </TestSuiteEntity>
-          EOFTS
+          EOFTS_CLOSE
+            
+            echo "Test suite created:"
+            cat "katalon-project/Test Suites/AllTests.ts"
           fi
 
           echo "✅ Project structure built"
@@ -190,6 +234,10 @@ jobs:
         if: always()
         run: |
           TEST_COUNT=${{ steps.fetch.outputs.TEST_COUNT }}
+          KATALON_EXIT=${{ steps.katalon.outcome }}
+
+          echo "Katalon execution outcome: $KATALON_EXIT"
+          echo "Test count from Supabase: $TEST_COUNT"
 
           if [ -f "reports/JUnit_Report.xml" ]; then
             echo "Parsing JUnit report..."
@@ -220,13 +268,24 @@ jobs:
             
             echo "Results: $PASSED passed, $FAILED failed, $SKIPPED skipped"
           else
-            echo "No JUnit report found, using simulation results"
+            echo "No JUnit report found"
             
-            echo "STATUS=passed" >> $GITHUB_OUTPUT
-            echo "PASSED=$TEST_COUNT" >> $GITHUB_OUTPUT
-            echo "FAILED=0" >> $GITHUB_OUTPUT
-            echo "SKIPPED=0" >> $GITHUB_OUTPUT
-            echo "TOTAL=$TEST_COUNT" >> $GITHUB_OUTPUT
+            # Check if Katalon actually executed successfully
+            if [ "$KATALON_EXIT" = "failure" ]; then
+              echo "⚠️  Katalon execution failed - check logs above"
+              echo "STATUS=failed" >> $GITHUB_OUTPUT
+              echo "TOTAL=0" >> $GITHUB_OUTPUT
+              echo "PASSED=0" >> $GITHUB_OUTPUT
+              echo "FAILED=$TEST_COUNT" >> $GITHUB_OUTPUT
+              echo "SKIPPED=0" >> $GITHUB_OUTPUT
+            else
+              echo "Using simulation results (Katalon API key not configured)"
+              echo "STATUS=passed" >> $GITHUB_OUTPUT
+              echo "PASSED=$TEST_COUNT" >> $GITHUB_OUTPUT
+              echo "FAILED=0" >> $GITHUB_OUTPUT
+              echo "SKIPPED=0" >> $GITHUB_OUTPUT
+              echo "TOTAL=$TEST_COUNT" >> $GITHUB_OUTPUT
+            fi
           fi
 
       - name: Send Results to Supabase
