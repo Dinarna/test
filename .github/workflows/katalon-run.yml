@@ -123,24 +123,24 @@ jobs:
           echo "✅ Project structure built"
           ls -la katalon-project/
 
-      - name: Run Katalon Tests with Docker
+            - name: Run Katalon Tests with Docker
         id: katalon
         continue-on-error: true
+        env:
+          KATALON_API_KEY: ${{ secrets.KATALON_API_KEY }}
         run: |
-          echo "Running Katalon tests..."
-          
-          # Run Katalon via Docker
           docker run --rm \
             -v $(pwd)/katalon-project:/katalon/katalon/source \
             -v $(pwd)/reports:/katalon/katalon/reports \
+            -e KATALON_API_KEY="${KATALON_API_KEY}" \
             katalonstudio/katalon \
             katalonc \
+            -apiKey="${KATALON_API_KEY}" \
             -projectPath=/katalon/katalon/source \
             -browserType="${{ github.event.client_payload.browser_type }}" \
             -retry=0 \
             -statusDelay=15 \
-            -reportFolder=/katalon/katalon/reports \
-            --config -webui.autoUpdateDrivers=true
+            -reportFolder=/katalon/katalon/reports
 
       - name: Parse Test Results
         id: parse
